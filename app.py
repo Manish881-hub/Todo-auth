@@ -1,77 +1,56 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash
-from models import db, User, create_app
-from werkzeug.security import check_password_hash
+from models import Todo
 
-app = create_app()
+# Add these routes to app.py after the existing routes
 
-# Initialize database
-with app.app_context():
-    db.create_all()
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    user_todos = Todo.query.filter_by(user_id=session['user_id']).order_by(Todo.created_at.desc()).all()
+    return render_template('dashboard.html', todos=user_todos)
 
-def login_required(f):
-    from functools import wraps
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'user_id' not in session:
-            flash('Please log in to access this page.', 'danger')
-            return redirect(url_for('login'))
-        return f(*args, **kwargs)
-    return decorated_function
+@app.route('/add_todo', methods=['POST'])
+@login_required
+def add_todo():
+    title = request.form['title']
+    description = request.form.get('description', '')
 
-@app.route('/')
-def home():
-    if 'user_id' in session:
-        return redirect(url_for('dashboard'))
-    return redirect(url_for('login'))
-
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    if request.method == 'POST':
-        name = request.form['name']
-        email = request.form['email']
-        password = request.form['password']
-
-        # Check if user already exists
-        existing_user = User.query.filter_by(email=email).first()
-        if existing_user:
-            flash('Email already registered. Please use a different email.', 'danger')
-            return render_template('register.html')
-
-        # Create new user
-        new_user = User(name=name, email=email)
-        new_user.set_password(password)
-
-        db.session.add(new_user)
+    if title:
+        new_todo = Todo(
+            title=title,
+            description=description,
+            user_id=session['user_id']
+        )
+        db.session.add(new_todo)
         db.session.commit()
+        flash('Todo added successfully!', 'success')
 
-        flash('Registration successful! Please log in.', 'success')
-        return redirect(url_for('login'))
+    return redirect(url_for('dashboard'))
 
-    return render_template('register.html')
+@app.route('/delete_todo/<int:todo_id>')
+@login_required
+def delete_todo(todo_id):
+    todo = Todo.query.filter_by(id=todo_id, user_id=session['user_id']).first()
 
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        email = request.form['email']
-        password = request.form['password']
+    if todo:
+        db.session.delete(todo)
+        db.session.commit()
+        flash('Todo deleted successfully!', 'success')
+    else:
+        flash('Todo not found or you do not have permission to delete it.', 'danger')
 
-        user = User.query.filter_by(email=email).first()
+    return redirect(url_for('dashboard'))
 
-        if user and user.check_password(password):
-            session['user_id'] = user.id
-            session['user_name'] = user.name
-            flash(f'Welcome back, {user.name}!', 'success')
-            return redirect(url_for('dashboard'))
-        else:
-            flash('Invalid email or password.', 'danger')
+@app.route('/toggle_todo/<int:todo_id>')
+@login_required
+def toggle_todo(todo_id):
+    todo = Todo.query.filter_by(id=todo_id, user_id=session['user_id']).first()
 
-    return render_template('login.html')
+    if todo:
+        todo.completed = not todo.completed
+        db.session.commit()
+        status = 'completed' if todo.completed else 'marked as incomplete'
+        flash(f'Todo {status}!', 'success')
+    else:
+        flash('Todo not found.', 'danger')
 
-@app.route('/logout')
-def logout():
-    session.clear()
-    flash('You have been logged out.', 'info')
-    return redirect(url_for('login'))
-
-if __name__ == '__main__':
-    app.run(debug=True)
+    return redirect(url_for('dashboard'))
